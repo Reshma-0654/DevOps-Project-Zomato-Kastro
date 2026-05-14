@@ -8,17 +8,18 @@ pipeline {
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
+        DOCKER_IMAGE = 'kastrov/zomato:latest'
     }
 
     stages {
 
-        stage("Clean Workspace") {
+        stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
 
-        stage("Git Checkout") {
+        stage('Git Checkout') {
             steps {
 
                 checkout scmGit(
@@ -30,45 +31,82 @@ pipeline {
                     ]]
                 )
 
-                sh 'pwd'
-                sh 'ls -la'
+                sh '''
+                echo "Current Directory:"
+                pwd
+
+                echo "Workspace Files:"
+                ls -la
+                '''
             }
         }
 
-        stage("Sonarqube Analysis") {
+        stage('Install Dependencies') {
+            steps {
+
+                sh '''
+                echo "Installing NPM dependencies..."
+
+                rm -rf node_modules package-lock.json
+
+                npm install
+                '''
+            }
+        }
+
+        stage('Run Test Coverage') {
+            steps {
+
+                sh '''
+                echo "Running React test coverage..."
+
+                npm run test:coverage -- --watchAll=false || true
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
             steps {
 
                 withSonarQubeEnv('sonar-server') {
 
                     sh '''
+                    echo "Starting SonarQube Scan..."
+
                     $SCANNER_HOME/bin/sonar-scanner \
                     -Dsonar.projectName=zomato \
-                    -Dsonar.projectKey=zomato
+                    -Dsonar.projectKey=zomato \
+                    -Dsonar.sources=src \
+                    -Dsonar.tests=src \
+                    -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
                     '''
                 }
             }
         }
 
-        stage("Code Quality Gate") {
+        stage('Quality Gate') {
             steps {
 
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                timeout(time: 10, unit: 'MINUTES') {
+
+                    script {
+
+                        def qg = waitForQualityGate()
+
+                        if (qg.status != 'OK') {
+
+                            error "Pipeline aborted due to Quality Gate failure: ${qg.status}"
+                        }
+                    }
                 }
             }
         }
 
-        stage("Install NPM Dependencies") {
-            steps {
-                sh "npm install"
-            }
-        }
-
-        stage('OWASP FS SCAN') {
+        stage('OWASP Dependency Check') {
             steps {
 
                 dependencyCheck(
-                    additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit -n',
+                    additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
                     odcInstallation: 'DP-Check'
                 )
 
@@ -78,88 +116,133 @@ pipeline {
             }
         }
 
-        stage("Trivy File Scan") {
+        stage('Trivy File Scan') {
             steps {
-                sh "trivy fs . > trivy.txt"
+
+                sh '''
+                echo "Running Trivy filesystem scan..."
+
+                trivy fs . > trivy.txt
+                '''
             }
         }
 
-        stage("Build Docker Image") {
+        stage('Build Docker Image') {
             steps {
-                sh "docker build -t zomato ."
+
+                sh '''
+                echo "Building Docker image..."
+
+                docker build -t zomato .
+                '''
             }
         }
 
-        stage("Tag & Push to DockerHub") {
-            steps {
-
-                script {
-
-                    withDockerRegistry(credentialsId: 'docker') {
-
-                        sh "docker tag zomato kastrov/zomato:latest"
-
-                        sh "docker push kastrov/zomato:latest"
-                    }
-                }
-            }
-        }
-
-        stage('Docker Scout Image') {
+        stage('Tag & Push Docker Image') {
             steps {
 
                 script {
 
                     withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
 
-                        sh 'docker-scout quickview kastrov/zomato:latest'
+                        sh '''
+                        echo "Tagging Docker image..."
 
-                        sh 'docker-scout cves kastrov/zomato:latest'
+                        docker tag zomato $DOCKER_IMAGE
 
-                        sh 'docker-scout recommendations kastrov/zomato:latest'
+                        echo "Pushing Docker image..."
+
+                        docker push $DOCKER_IMAGE
+                        '''
                     }
                 }
             }
         }
 
-        stage("Deploy to Container") {
+        stage('Docker Scout Scan') {
             steps {
 
-                sh 'docker stop zomato || true'
+                sh '''
+                echo "Docker Scout Quickview"
 
-                sh 'docker rm zomato || true'
+                docker-scout quickview $DOCKER_IMAGE
 
-                sh 'docker run -d --name zomato -p 3000:3000 kastrov/zomato:latest'
+                echo "Docker Scout CVEs"
+
+                docker-scout cves $DOCKER_IMAGE
+
+                echo "Docker Scout Recommendations"
+
+                docker-scout recommendations $DOCKER_IMAGE
+                '''
+            }
+        }
+
+        stage('Deploy Container') {
+            steps {
+
+                sh '''
+                echo "Stopping old container if exists..."
+
+                docker stop zomato || true
+
+                docker rm zomato || true
+
+                echo "Running new container..."
+
+                docker run -d \
+                --name zomato \
+                -p 3000:3000 \
+                $DOCKER_IMAGE
+                '''
             }
         }
     }
 
     post {
 
+        success {
+
+            echo 'Pipeline executed successfully!'
+        }
+
+        failure {
+
+            echo 'Pipeline failed!'
+        }
+
         always {
 
             emailext(
                 attachLog: true,
-                subject: "${currentBuild.result}",
+                subject: "${currentBuild.currentResult}: ${env.JOB_NAME}",
                 body: """
                 <html>
                 <body>
 
-                    <div style="background-color: #FFA07A; padding: 10px; margin-bottom: 10px;">
-                        <p style="color: white; font-weight: bold;">
+                    <h2>Jenkins Pipeline Report</h2>
+
+                    <div style="background-color:#FFA07A;padding:10px;margin-bottom:10px;">
+                        <p style="color:white;font-weight:bold;">
                             Project: ${env.JOB_NAME}
                         </p>
                     </div>
 
-                    <div style="background-color: #90EE90; padding: 10px; margin-bottom: 10px;">
-                        <p style="color: white; font-weight: bold;">
+                    <div style="background-color:#90EE90;padding:10px;margin-bottom:10px;">
+                        <p style="color:white;font-weight:bold;">
                             Build Number: ${env.BUILD_NUMBER}
                         </p>
                     </div>
 
-                    <div style="background-color: #87CEEB; padding: 10px; margin-bottom: 10px;">
-                        <p style="color: white; font-weight: bold;">
-                            URL: ${env.BUILD_URL}
+                    <div style="background-color:#87CEEB;padding:10px;margin-bottom:10px;">
+                        <p style="color:white;font-weight:bold;">
+                            Build URL: ${env.BUILD_URL}
+                        </p>
+                    </div>
+
+                    <div style="background-color:#DDA0DD;padding:10px;">
+                        <p style="color:white;font-weight:bold;">
+                            Build Status: ${currentBuild.currentResult}
                         </p>
                     </div>
 
