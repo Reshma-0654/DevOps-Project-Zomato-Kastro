@@ -130,25 +130,6 @@ pipeline {
             }
         }
 
-        stage('Docker Scout Scan') {
-            steps {
-
-                sh '''
-                echo "Docker Scout Quickview"
-
-                docker-scout quickview reshma6540/zomato:latest
-
-                echo "Docker Scout CVE Scan"
-
-                docker-scout cves reshma6540/zomato:latest
-
-                echo "Docker Scout Recommendations"
-
-                docker-scout recommendations reshma6540/zomato:latest
-                '''
-            }
-        }
-
         stage('Deploy Container') {
             steps {
 
@@ -162,7 +143,7 @@ pipeline {
 
                 docker run -d \
                 --name zomato \
-                -p 9999:9999 \
+                -p 3000:3000 \
                 reshma6540/zomato:latest
                 '''
             }
