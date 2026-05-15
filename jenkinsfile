@@ -143,7 +143,7 @@ pipeline {
 
                 docker run -d \
                 --name zomato \
-                -p 3000:3000 \
+                -p 9999:9999 \
                 reshma6540/zomato:latest
                 '''
             }
