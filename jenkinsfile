@@ -8,7 +8,7 @@ pipeline {
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
-        DOCKER_IMAGE = 'kastrov/zomato:latest'
+        DOCKER_IMAGE = 'reshma6540/zomato:latest'
     }
 
     stages {
@@ -119,11 +119,11 @@ pipeline {
                         sh '''
                         echo "Tagging image..."
 
-                        docker tag zomato $DOCKER_IMAGE
+                        docker tag zomato reshma6540/zomato:latest
 
                         echo "Pushing image..."
 
-                        docker push $DOCKER_IMAGE
+                        docker push reshma6540/zomato:latest
                         '''
                     }
                 }
@@ -136,15 +136,15 @@ pipeline {
                 sh '''
                 echo "Docker Scout Quickview"
 
-                docker-scout quickview $DOCKER_IMAGE
+                docker-scout quickview reshma6540/zomato:latest
 
                 echo "Docker Scout CVE Scan"
 
-                docker-scout cves $DOCKER_IMAGE
+                docker-scout cves reshma6540/zomato:latest
 
                 echo "Docker Scout Recommendations"
 
-                docker-scout recommendations $DOCKER_IMAGE
+                docker-scout recommendations reshma6540/zomato:latest
                 '''
             }
         }
@@ -162,8 +162,8 @@ pipeline {
 
                 docker run -d \
                 --name zomato \
-                -p 3000:3000 \
-                $DOCKER_IMAGE
+                -p 9999:9999 \
+                reshma6540/zomato:latest
                 '''
             }
         }
